@@ -1,0 +1,6 @@
+requests
+python-dotenv
+mcp
+langgraph
+fastapi
+uvicorn

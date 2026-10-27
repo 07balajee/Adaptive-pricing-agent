@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+# SoloFare local database (quote history + map cache)
+data/*.db

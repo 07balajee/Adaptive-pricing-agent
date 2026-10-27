@@ -1,0 +1,1190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SoloFare — Adaptive Taxi Pricing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+<style>
+  :root {
+    --bg: #07080f;
+    --bg-2: #0d1020;
+    --glass: rgba(255, 255, 255, 0.045);
+    --glass-strong: rgba(255, 255, 255, 0.075);
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --text: #f3f4f8;
+    --muted: #9298ad;
+    --dim: #61677d;
+    --taxi: #ffc93c;
+    --taxi-2: #ff8a3d;
+    --good: #3ddc97;
+    --bad: #ff6b6b;
+    --info: #6aa8ff;
+    --radius: 18px;
+    --shadow: 0 20px 60px -20px rgba(0, 0, 0, 0.7);
+  }
+  * { box-sizing: border-box; }
+  html { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 15px/1.5 "Plus Jakarta Sans", system-ui, sans-serif; overflow-x: hidden;
+  }
+  .num { font-family: "Space Grotesk", "Plus Jakarta Sans", sans-serif; font-variant-numeric: tabular-nums; }
+
+  /* ---------- Background: drifting glow orbs, road grid, rain canvas ---------- */
+  .bg { position: fixed; inset: 0; z-index: -2; overflow: hidden; background:
+        radial-gradient(1200px 600px at 80% -10%, #1a1640 0%, transparent 60%),
+        radial-gradient(900px 500px at -10% 110%, #2a1a10 0%, transparent 60%), var(--bg); }
+  .orb { position: absolute; border-radius: 50%; filter: blur(80px); opacity: .45; animation: drift 22s ease-in-out infinite alternate; }
+  .orb.a { width: 520px; height: 520px; background: #ffb13c; top: -180px; left: 55%; opacity: .18; }
+  .orb.b { width: 460px; height: 460px; background: #5b4bff; bottom: -200px; left: -120px; opacity: .22; animation-duration: 28s; }
+  .orb.c { width: 340px; height: 340px; background: #ff5d8f; top: 40%; right: -160px; opacity: .12; animation-duration: 34s; }
+  @keyframes drift { to { transform: translate3d(-80px, 60px, 0) scale(1.15); } }
+  .grid { position: absolute; inset: 0; opacity: .5;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 56px 56px; mask-image: radial-gradient(ellipse at 50% 0%, #000 0%, transparent 70%); }
+  #rain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+  #flash { position: fixed; inset: 0; z-index: -1; pointer-events: none; background: #cfd8ff; opacity: 0; }
+
+  /* ---------- Layout ---------- */
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 34px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--taxi), var(--taxi-2)); box-shadow: 0 8px 30px -6px rgba(255, 170, 60, .6); }
+  .logo svg { width: 26px; height: 26px; }
+  .brand b { font-size: 20px; letter-spacing: -.02em; display: block; }
+  .brand span { font-size: 12.5px; color: var(--muted); }
+  .nav-link { color: var(--muted); text-decoration: none; font-size: 13px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; transition: .2s; }
+  .nav-link:hover { color: var(--text); border-color: var(--line-strong); background: var(--glass); }
+
+  .hero { margin-bottom: 30px; }
+  .hero h1 { font-size: clamp(30px, 4.6vw, 52px); line-height: 1.05; letter-spacing: -.035em; margin: 0 0 12px; font-weight: 800; }
+  .grad { background: linear-gradient(100deg, var(--taxi) 0%, var(--taxi-2) 50%, #ff5d8f 100%); background-size: 200% auto;
+    -webkit-background-clip: text; background-clip: text; color: transparent; animation: shine 6s linear infinite; }
+  @keyframes shine { to { background-position: 200% center; } }
+  .hero p { color: var(--muted); margin: 0; max-width: 620px; font-size: 16px; }
+
+  .layout { display: grid; grid-template-columns: 420px 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+
+  .card { background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
+    backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); box-shadow: var(--shadow); }
+  .form { padding: 22px; position: sticky; top: 18px; }
+  @media (max-width: 980px) { .form { position: static; } }
+  .sec { margin-bottom: 18px; }
+  .sec-title { font-size: 11.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); margin: 0 0 9px; display: flex; justify-content: space-between; align-items: center; }
+
+  /* ---------- Inputs ---------- */
+  .field { position: relative; }
+  .field .ico { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--muted); pointer-events: none; }
+  input[type=text], input[type=number], input[type=datetime-local] {
+    width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, .25);
+    color: var(--text); font: inherit; outline: none; transition: border-color .2s, box-shadow .2s, background .2s; }
+  .field input { padding-left: 40px; }
+  input:focus { border-color: rgba(255, 201, 60, .6); box-shadow: 0 0 0 4px rgba(255, 201, 60, .12); background: rgba(0, 0, 0, .35); }
+  input::-webkit-calendar-picker-indicator { filter: invert(.8); cursor: pointer; }
+  .route-inputs { position: relative; display: grid; gap: 8px; }
+  .route-inputs .dot { position: absolute; left: 18px; width: 8px; height: 8px; border-radius: 50%; top: 50%; transform: translateY(-50%); }
+  .dot.from { background: var(--good); box-shadow: 0 0 0 4px rgba(61, 220, 151, .18); }
+  .dot.to { background: var(--taxi); box-shadow: 0 0 0 4px rgba(255, 201, 60, .18); }
+  .route-inputs::before { content: ""; position: absolute; left: 21px; top: 30px; bottom: 30px; border-left: 2px dashed var(--line-strong); z-index: 1; }
+  .swap { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); z-index: 2; width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid var(--line-strong); background: var(--bg-2); color: var(--text); cursor: pointer; display: grid; place-items: center; transition: transform .4s cubic-bezier(.3, 1.6, .5, 1), border-color .2s; }
+  .swap:hover { border-color: var(--taxi); transform: translateY(-50%) rotate(180deg); }
+  .swap svg { width: 16px; height: 16px; }
+
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; padding: 5px; border-radius: 14px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); }
+  .seg button { all: unset; cursor: pointer; text-align: center; padding: 9px 6px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--muted);
+    transition: background .25s, color .25s, box-shadow .25s, transform .15s; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .seg button small { font-size: 10.5px; font-weight: 500; opacity: .75; }
+  .seg button:hover { color: var(--text); background: var(--glass); }
+  .seg button:active { transform: scale(.96); }
+  .seg button.active { color: #1a1300; background: linear-gradient(135deg, var(--taxi), var(--taxi-2)); box-shadow: 0 6px 20px -6px rgba(255, 160, 60, .7); }
+  .seg button:focus-visible { outline: 2px solid var(--taxi); outline-offset: 2px; }
+
+  .comp-row { display: grid; grid-template-columns: 1fr 110px 34px; gap: 8px; margin-bottom: 8px; animation: pop .35s cubic-bezier(.3, 1.4, .5, 1); }
+  .comp-row .fare { position: relative; }
+  .comp-row .fare span { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); }
+  .comp-row .fare input { padding-left: 26px; }
+  .icon-btn { all: unset; cursor: pointer; display: grid; place-items: center; border-radius: 10px; color: var(--dim); border: 1px solid transparent; transition: .2s; }
+  .icon-btn:hover { color: var(--bad); border-color: rgba(255, 107, 107, .35); background: rgba(255, 107, 107, .08); }
+  @keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip-btn { all: unset; cursor: pointer; font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px dashed var(--line-strong); color: var(--muted); transition: .2s; }
+  .chip-btn:hover { color: var(--taxi); border-color: var(--taxi); border-style: solid; }
+
+  details.costs { border: 1px solid var(--line); border-radius: 14px; background: rgba(0, 0, 0, .18); }
+  details.costs summary { cursor: pointer; list-style: none; padding: 12px 14px; font-weight: 600; font-size: 13.5px; display: flex; align-items: center; justify-content: space-between; }
+  details.costs summary::-webkit-details-marker { display: none; }
+  details.costs summary .chev { transition: transform .3s; color: var(--muted); }
+  details.costs[open] summary .chev { transform: rotate(180deg); }
+  .costs-body { padding: 0 14px 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .costs-body label { font-size: 12px; color: var(--muted); display: grid; gap: 5px; }
+  .toggle { grid-column: 1 / -1; display: flex !important; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; cursor: pointer; }
+  .switch { position: relative; width: 44px; height: 24px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch i { position: absolute; inset: 0; border-radius: 999px; background: var(--line-strong); transition: .3s; }
+  .switch i::after { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: transform .3s cubic-bezier(.3, 1.5, .5, 1); }
+  .switch input:checked + i { background: linear-gradient(135deg, var(--taxi), var(--taxi-2)); }
+  .switch input:checked + i::after { transform: translateX(20px); }
+  .switch input:focus-visible + i { outline: 2px solid var(--taxi); outline-offset: 2px; }
+
+  .cta { all: unset; cursor: pointer; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; box-sizing: border-box; margin-top: 6px; padding: 16px; border-radius: 14px; font-weight: 800; font-size: 16px; color: #1a1300;
+    background: linear-gradient(135deg, var(--taxi), var(--taxi-2)); box-shadow: 0 14px 40px -12px rgba(255, 150, 60, .8); transition: transform .2s, box-shadow .2s, filter .2s; }
+  .cta::after { content: ""; position: absolute; top: 0; left: -60%; width: 40%; height: 100%; transform: skewX(-20deg);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .55), transparent); animation: sweep 3.2s ease-in-out infinite; }
+  @keyframes sweep { 0%, 60% { left: -60%; } 100% { left: 130%; } }
+  .cta:hover { transform: translateY(-2px); box-shadow: 0 20px 50px -12px rgba(255, 150, 60, .95); }
+  .cta:active { transform: translateY(0) scale(.99); }
+  .cta:disabled, .cta[aria-busy=true] { filter: saturate(.6) brightness(.85); cursor: progress; }
+  .cta:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+  /* ---------- Results ---------- */
+  .results { display: grid; gap: 18px; min-width: 0; }
+  .empty, .loading { padding: 40px 26px; text-align: center; }
+  .empty h3, .loading h3 { margin: 18px 0 6px; font-size: 19px; }
+  .empty p { color: var(--muted); margin: 0 auto; max-width: 380px; }
+
+  .road { position: relative; height: 90px; max-width: 420px; margin: 0 auto; overflow: hidden; border-radius: 14px; }
+  .road::before { content: ""; position: absolute; left: 0; right: 0; bottom: 18px; height: 2px;
+    background: repeating-linear-gradient(90deg, var(--line-strong) 0 26px, transparent 26px 50px); animation: roadmove .8s linear infinite; }
+  @keyframes roadmove { to { background-position: -50px 0; } }
+  .road .car { position: absolute; bottom: 22px; left: 50%; width: 92px; margin-left: -46px; animation: bob .6s ease-in-out infinite alternate; filter: drop-shadow(0 10px 18px rgba(255, 180, 60, .45)); }
+  @keyframes bob { to { transform: translateY(-3px); } }
+  .road .speed { position: absolute; height: 2px; border-radius: 2px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .5)); animation: speed 1.1s linear infinite; }
+  @keyframes speed { from { transform: translateX(460px); } to { transform: translateX(-120px); } }
+
+  .steps { list-style: none; padding: 0; margin: 22px auto 0; max-width: 330px; text-align: left; display: grid; gap: 10px; }
+  .steps li { display: flex; align-items: center; gap: 12px; color: var(--dim); transition: color .3s; }
+  .steps li .st { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line-strong); display: grid; place-items: center; flex: none; transition: .3s; }
+  .steps li.active { color: var(--text); }
+  .steps li.active .st { border-color: var(--taxi); border-top-color: transparent; animation: spin .8s linear infinite; }
+  .steps li.done { color: var(--muted); }
+  .steps li.done .st { border-color: var(--good); background: var(--good); animation: none; }
+  .steps li.done .st::after { content: ""; width: 5px; height: 9px; border: solid #062; border-width: 0 2px 2px 0; transform: rotate(45deg) translate(-1px, -1px); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .reveal { opacity: 0; transform: translateY(18px); animation: reveal .7s cubic-bezier(.2, .8, .2, 1) forwards; }
+  @keyframes reveal { to { opacity: 1; transform: none; } }
+
+  .fare-card { padding: 28px; position: relative; overflow: hidden; transform-style: preserve-3d; transition: transform .25s ease-out; }
+  .fare-card::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1px; pointer-events: none;
+    background: conic-gradient(from var(--ang, 0deg), transparent 0 70%, var(--taxi) 80%, var(--taxi-2) 88%, transparent 95%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: rot 5s linear infinite; }
+  @property --ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+  @keyframes rot { to { --ang: 360deg; } }
+  .fare-card .glow { position: absolute; width: 380px; height: 380px; right: -120px; top: -160px; border-radius: 50%; background: radial-gradient(circle, rgba(255, 190, 60, .28), transparent 65%); pointer-events: none; }
+  .fare-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .label { font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); background: rgba(0, 0, 0, .2); }
+  .pill.ai { color: #c9b8ff; border-color: rgba(160, 130, 255, .45); background: rgba(120, 90, 255, .1); }
+  .pill.ai::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #a98bff; box-shadow: 0 0 10px #a98bff; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .fare-amt { font-size: clamp(64px, 9vw, 96px); font-weight: 700; letter-spacing: -.04em; line-height: 1; margin: 10px 0 8px;
+    background: linear-gradient(180deg, #fff 20%, var(--taxi) 140%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-shadow: 0 0 60px rgba(255, 190, 60, .25); }
+  .fare-amt .cur { font-size: .55em; vertical-align: .35em; margin-right: 4px; }
+  .headline { font-size: 17px; font-weight: 600; margin: 0 0 16px; max-width: 560px; }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge { display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 12px; font-size: 13.5px; font-weight: 600; }
+  .badge.good { background: rgba(61, 220, 151, .12); color: var(--good); border: 1px solid rgba(61, 220, 151, .3); }
+  .badge.warn { background: rgba(255, 107, 107, .1); color: #ff9b9b; border: 1px solid rgba(255, 107, 107, .3); }
+  .badge.neutral { background: var(--glass); color: var(--muted); border: 1px solid var(--line); }
+  .strike { text-decoration: line-through; text-decoration-color: var(--bad); text-decoration-thickness: 2px; color: var(--dim); }
+
+  .row2 { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; }
+  @media (max-width: 720px) { .row2 { grid-template-columns: 1fr; } }
+  .panel { padding: 20px 22px; min-width: 0; }
+  .panel h4 { margin: 0 0 14px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .panel h4 svg { width: 17px; height: 17px; color: var(--taxi); }
+
+  .bars { display: grid; gap: 11px; }
+  .bar-row { display: grid; grid-template-columns: 96px 1fr 62px; align-items: center; gap: 10px; font-size: 13px; }
+  .bar-row .nm { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-row.you .nm { color: var(--taxi); font-weight: 700; }
+  .track { height: 12px; border-radius: 999px; background: rgba(255, 255, 255, .05); overflow: hidden; }
+  .fill { height: 100%; width: 0; border-radius: inherit; background: linear-gradient(90deg, #3a3f55, #565c78); transition: width 1.1s cubic-bezier(.2, .8, .2, 1); }
+  .bar-row.you .fill { background: linear-gradient(90deg, var(--taxi), var(--taxi-2)); box-shadow: 0 0 18px rgba(255, 170, 60, .6); }
+  .bar-row .v { text-align: right; font-weight: 600; }
+
+  .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat { padding: 12px 13px; border-radius: 13px; background: rgba(0, 0, 0, .2); border: 1px solid var(--line); }
+  .stat .k { font-size: 11.5px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .07em; }
+  .stat .val { font-size: 19px; font-weight: 700; margin-top: 3px; display: flex; align-items: center; gap: 6px; }
+  .stat .sub { font-size: 12px; color: var(--muted); }
+
+  .gauge { position: relative; width: 100%; max-width: 210px; margin: 2px auto 0; }
+  .gauge svg { width: 100%; display: block; }
+  .gauge .g-val { position: absolute; left: 0; right: 0; bottom: 4px; text-align: center; }
+  .gauge .g-val b { font-size: 22px; display: block; }
+  .gauge .g-val span { font-size: 12px; color: var(--muted); }
+  #gArc { transition: stroke-dashoffset 1.4s cubic-bezier(.2, .8, .2, 1); }
+
+  #map { height: 280px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #0b0d17; }
+  .leaflet-container { font: inherit; background: #0b0d17; }
+  .leaflet-control-attribution { background: rgba(7, 8, 15, .7) !important; color: var(--dim) !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .dark-tiles { filter: invert(1) hue-rotate(200deg) brightness(.85) contrast(.9) saturate(.5); }
+  .route-anim { stroke-dasharray: 10 12; animation: dash 1s linear infinite; }
+  @keyframes dash { to { stroke-dashoffset: -22; } }
+  .pin { width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(255, 255, 255, .12), 0 4px 14px rgba(0, 0, 0, .6); }
+  .pin.from { background: var(--good); }
+  .pin.to { background: var(--taxi); }
+
+  .factors { display: flex; flex-wrap: wrap; gap: 8px; }
+  .factor { display: flex; align-items: center; gap: 9px; padding: 9px 12px; border-radius: 12px; background: rgba(0, 0, 0, .2); border: 1px solid var(--line); font-size: 13px; }
+  .factor .arr { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; font-weight: 800; font-size: 13px; flex: none; }
+  .factor.up .arr { background: rgba(255, 201, 60, .15); color: var(--taxi); }
+  .factor.down .arr { background: rgba(106, 168, 255, .15); color: var(--info); }
+  .factor.flat .arr { background: var(--glass); color: var(--muted); }
+  .factor small { display: block; color: var(--muted); font-size: 11.5px; }
+
+  .stack { display: flex; height: 16px; border-radius: 999px; overflow: hidden; background: rgba(255, 255, 255, .05); margin: 6px 0 14px; }
+  .stack div { width: 0; transition: width 1.2s cubic-bezier(.2, .8, .2, 1); }
+  .legend { display: grid; gap: 9px; }
+  .legend .li { display: flex; justify-content: space-between; align-items: center; font-size: 13.5px; }
+  .legend .li span { display: flex; align-items: center; gap: 9px; color: var(--muted); }
+  .legend .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .legend .li.total { border-top: 1px dashed var(--line-strong); padding-top: 9px; font-weight: 700; }
+  .legend .li.total span { color: var(--text); }
+
+  .wa { background: linear-gradient(160deg, rgba(18, 140, 126, .14), rgba(0, 0, 0, .1)); }
+  .bubble { position: relative; background: #005c4b; color: #e9fdf6; padding: 13px 15px 22px; border-radius: 14px 14px 4px 14px; font-size: 14.5px; line-height: 1.55; white-space: pre-wrap; box-shadow: 0 8px 26px -10px rgba(0, 0, 0, .6); margin-left: 18px; }
+  .bubble .time { position: absolute; right: 12px; bottom: 5px; font-size: 11px; color: rgba(233, 253, 246, .6); }
+  .sp { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0; }
+  .sp span { font-size: 12.5px; padding: 5px 11px; border-radius: 999px; background: rgba(61, 220, 151, .1); color: var(--good); border: 1px solid rgba(61, 220, 151, .25); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; padding: 10px 15px; border-radius: 11px; font-weight: 700; font-size: 13.5px; transition: transform .15s, filter .2s, background .2s; }
+  .btn svg { width: 16px; height: 16px; }
+  .btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+  .btn:focus-visible { outline: 2px solid var(--taxi); outline-offset: 2px; }
+  .btn.green { background: #25d366; color: #06301a; }
+  .btn.ghost { background: var(--glass-strong); color: var(--text); border: 1px solid var(--line-strong); }
+
+  .why { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; counter-reset: why; }
+  .why li { position: relative; padding-left: 36px; color: #d6d9e4; font-size: 14px; counter-increment: why; }
+  .why li::before { content: counter(why); position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center;
+    font-size: 12px; font-weight: 800; color: var(--taxi); background: rgba(255, 201, 60, .12); border: 1px solid rgba(255, 201, 60, .25); }
+
+  /* ---------- Place suggestions ---------- */
+  .suggest { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 50; list-style: none; margin: 0; padding: 6px;
+    background: #12152a; border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 24px 50px -12px rgba(0, 0, 0, .8); animation: pop .2s ease-out; }
+  .suggest li { padding: 9px 11px; border-radius: 10px; cursor: pointer; display: grid; gap: 1px; }
+  .suggest li b { font-weight: 600; font-size: 14px; }
+  .suggest li span { font-size: 12px; color: var(--muted); }
+  .suggest li.on, .suggest li:hover { background: rgba(255, 201, 60, .1); }
+  .suggest li.on b { color: var(--taxi); }
+  .suggest .empty-s { color: var(--muted); font-size: 13px; cursor: default; }
+  .route-tools { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+  .link-btn { all: unset; cursor: pointer; font-size: 12.5px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; padding: 4px 2px; transition: color .2s; }
+  .link-btn:hover { color: var(--taxi); }
+  .link-btn svg { width: 15px; height: 15px; }
+  .link-btn[aria-busy=true] svg { animation: spin 1s linear infinite; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+  /* ---------- Fare options + outcome ---------- */
+  .options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 20px; position: relative; }
+  @media (max-width: 560px) { .options { grid-template-columns: 1fr; } }
+  .opt { all: unset; cursor: pointer; position: relative; padding: 13px 14px; border-radius: 14px; background: rgba(0, 0, 0, .22); border: 1px solid var(--line);
+    transition: border-color .25s, background .25s, transform .2s, box-shadow .25s; }
+  .opt:hover { transform: translateY(-2px); border-color: var(--line-strong); }
+  .opt:focus-visible { outline: 2px solid var(--taxi); outline-offset: 2px; }
+  .opt .t { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .opt .f { font-size: 24px; font-weight: 700; margin: 4px 0 2px; }
+  .opt .h { font-size: 12px; color: var(--dim); }
+  .opt .s { font-size: 12px; color: var(--good); font-weight: 600; }
+  .opt.active { border-color: rgba(255, 201, 60, .7); background: rgba(255, 201, 60, .08); box-shadow: 0 10px 30px -14px rgba(255, 170, 60, .7); }
+  .opt.active .t { color: var(--taxi); }
+  .opt .star { font-size: 10px; padding: 2px 7px; border-radius: 999px; background: rgba(255, 201, 60, .15); color: var(--taxi); letter-spacing: .04em; }
+  .outcome { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line-strong); font-size: 14px; color: var(--muted); }
+  .outcome .q { flex: 1 1 200px; }
+  .btn.won { background: rgba(61, 220, 151, .14); color: var(--good); border: 1px solid rgba(61, 220, 151, .35); }
+  .btn.lost { background: rgba(255, 107, 107, .1); color: #ff9b9b; border: 1px solid rgba(255, 107, 107, .3); }
+  .btn:disabled { opacity: .5; cursor: default; transform: none; }
+
+  /* ---------- Pitch loading shimmer ---------- */
+  .shimmer { display: grid; gap: 9px; padding: 14px 15px; border-radius: 14px; background: rgba(0, 92, 75, .35); margin-left: 18px; }
+  .shimmer i { display: block; height: 11px; border-radius: 6px; background: linear-gradient(90deg, rgba(255, 255, 255, .06) 0%, rgba(255, 255, 255, .18) 50%, rgba(255, 255, 255, .06) 100%);
+    background-size: 200% 100%; animation: shim 1.3s linear infinite; }
+  .shimmer i:nth-child(2) { width: 85%; } .shimmer i:nth-child(3) { width: 60%; }
+  @keyframes shim { to { background-position: -200% 0; } }
+  .typing { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+  .typing b { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 1.2s infinite; }
+  .typing b:nth-child(2) { animation-delay: .2s; } .typing b:nth-child(3) { animation-delay: .4s; }
+  @keyframes blink { 0%, 80%, 100% { opacity: .2; } 40% { opacity: 1; } }
+
+  /* ---------- History ---------- */
+  .hist-top { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; align-items: center; margin-bottom: 14px; }
+  .hist-stats .stat { min-width: 0; }
+  @media (max-width: 520px) {
+    .hist-top { gap: 12px; }
+    .hist-stats { gap: 6px; }
+    .hist-stats .stat { padding: 9px 8px; }
+    .hist-stats .stat .val { font-size: 16px; }
+  }
+  .ring { width: 84px; height: 84px; position: relative; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 9; }
+  .ring .rv { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-size: 19px; font-weight: 700; line-height: 1.1; }
+  .ring .rv small { display: block; font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: .06em; }
+  #ringArc { transition: stroke-dashoffset 1.2s cubic-bezier(.2, .8, .2, 1); }
+  .hist-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .hist-list { display: grid; gap: 6px; }
+  .hrow { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 9px 11px; border-radius: 12px; background: rgba(0, 0, 0, .18); border: 1px solid var(--line); font-size: 13px; }
+  .hrow .rt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hrow .rt small { color: var(--dim); margin-left: 6px; }
+  .tag { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .tag.won { background: rgba(61, 220, 151, .14); color: var(--good); }
+  .tag.lost { background: rgba(255, 107, 107, .12); color: #ff9b9b; }
+  .mini { all: unset; cursor: pointer; font-size: 12px; padding: 3px 8px; border-radius: 8px; border: 1px solid var(--line-strong); color: var(--muted); }
+  .mini:hover { color: var(--text); border-color: var(--taxi); }
+  .muted-note { color: var(--dim); font-size: 13px; }
+
+  .error { padding: 22px; border-color: rgba(255, 107, 107, .35); background: rgba(255, 107, 107, .07); }
+  .error b { color: #ff9b9b; }
+  .toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 30px); opacity: 0; padding: 11px 18px; border-radius: 12px;
+    background: #1d2033; border: 1px solid var(--line-strong); font-weight: 600; font-size: 14px; transition: .35s cubic-bezier(.3, 1.4, .5, 1); z-index: 1000; pointer-events: none; }
+  .toast.show { transform: translate(-50%, 0); opacity: 1; }
+  .hidden { display: none !important; }
+  footer { text-align: center; color: var(--dim); font-size: 12px; margin-top: 40px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
+  @media (max-width: 520px) {
+    .wrap { padding: 18px 16px 40px; }
+    .form, .fare-card { padding: 18px; }
+    .costs-body { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 78px 1fr 56px; }
+  }
+</style>
+</head>
+<body>
+<div class="bg"><div class="orb a"></div><div class="orb b"></div><div class="orb c"></div><div class="grid"></div></div>
+<canvas id="rain"></canvas>
+<div id="flash"></div>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#1a1300" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17h14M6 17l1.5-5.5A2 2 0 0 1 9.4 10h5.2a2 2 0 0 1 1.9 1.5L18 17"/><path d="M4 17v2M20 17v2"/><circle cx="7.5" cy="14.5" r=".6" fill="#1a1300"/><circle cx="16.5" cy="14.5" r=".6" fill="#1a1300"/><path d="M10 10V7.5h4V10"/></svg>
+      </div>
+      <div><b>SoloFare</b><span>Adaptive pricing for independent taxi drivers</span></div>
+    </div>
+    <a class="nav-link" href="/retail">Retail pricing →</a>
+  </header>
+
+  <section class="hero">
+    <h1>Beat the big brands.<br><span class="grad">Keep your profit.</span></h1>
+    <p>Tell us the trip and what the branded taxis are charging. We read the road, the weather and the demand — and give you a fare riders will pick over Red Taxi, Blue Taxi and the apps.</p>
+  </section>
+
+  <div class="layout">
+    <!-- ================= FORM ================= -->
+    <form class="card form" id="form" autocomplete="off">
+      <div class="sec">
+        <p class="sec-title">Trip</p>
+        <div class="route-inputs">
+          <div class="field"><span class="dot from"></span><input type="text" id="pickup" aria-label="Pickup" placeholder="Pickup location" value="Coimbatore Junction railway station" required></div>
+          <div class="field"><span class="dot to"></span><input type="text" id="drop" aria-label="Drop" placeholder="Drop location" value="Coimbatore International Airport" required></div>
+          <button type="button" class="swap" id="swap" title="Swap pickup and drop" aria-label="Swap pickup and drop">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></svg>
+          </button>
+        </div>
+        <div class="route-tools">
+          <button type="button" class="link-btn" id="locate">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            Use my location as pickup
+          </button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">When</p>
+        <div class="field">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <input type="datetime-local" id="tripTime" aria-label="Trip time">
+        </div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">Your vehicle</p>
+        <div class="seg" data-group="vehicle_type" role="radiogroup" aria-label="Vehicle type">
+          <button type="button" data-value="hatchback">Hatchback<small>4 seats</small></button>
+          <button type="button" data-value="sedan" class="active">Sedan<small>4 seats + boot</small></button>
+          <button type="button" data-value="suv">SUV<small>6–7 seats</small></button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">Competitor fares <span style="text-transform:none;letter-spacing:0;font-weight:500">same trip</span></p>
+        <div id="comps"></div>
+        <div class="chips" id="presets"></div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">Taxis around you</p>
+        <div class="seg" data-group="taxi_supply" role="radiogroup" aria-label="Taxi availability">
+          <button type="button" data-value="very_few" class="active">Very few<small>hard to find</small></button>
+          <button type="button" data-value="some">Some<small>normal</small></button>
+          <button type="button" data-value="plenty">Plenty<small>lots waiting</small></button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">Weather</p>
+        <div class="seg" data-group="weather_override" role="radiogroup" aria-label="Weather">
+          <button type="button" data-value="auto" class="active">Live<small>auto-detect</small></button>
+          <button type="button" data-value="clear">Clear<small>☀️</small></button>
+          <button type="button" data-value="rain">Raining<small>🌧️</small></button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <p class="sec-title">Customer message</p>
+        <div class="seg" data-group="language" role="radiogroup" aria-label="Message language">
+          <button type="button" data-value="en" class="active">English<small>for everyone</small></button>
+          <button type="button" data-value="ta">தமிழ்<small>Tamil</small></button>
+        </div>
+        <div class="two">
+          <input type="text" id="driver_name" placeholder="Your name (optional)" aria-label="Your name" maxlength="40">
+          <input type="text" id="driver_phone" placeholder="Phone (optional)" aria-label="Your phone" inputmode="tel" maxlength="20">
+        </div>
+      </div>
+
+      <div class="sec">
+        <details class="costs" id="costs">
+          <summary>My costs &amp; minimum profit
+            <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="costs-body">
+            <label>Fuel price (₹/L)<input type="number" id="fuel_price" value="102" min="1" step="0.5"></label>
+            <label>Mileage (km/L)<input type="number" id="mileage_kmpl" value="15" min="1" step="0.5"></label>
+            <label>Min. profit per trip (₹)<input type="number" id="min_profit" value="150" min="0" step="10"></label>
+            <label>Tolls / parking (₹)<input type="number" id="tolls_parking" value="0" min="0" step="10"></label>
+            <label class="toggle"><span>I'll probably return empty</span><span class="switch"><input type="checkbox" id="return_empty" checked><i></i></span></label>
+          </div>
+        </details>
+      </div>
+
+      <button class="cta" id="go" type="submit">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        Get my winning fare
+      </button>
+    </form>
+
+    <!-- ================= RESULTS ================= -->
+    <section class="results" id="results" aria-live="polite">
+      <div class="card empty" id="empty">
+        <div class="road" aria-hidden="true"><div id="carSlot"></div></div>
+        <h3>Your winning fare shows up here</h3>
+        <p>Add the fares Red Taxi, Blue Taxi or the apps are quoting, then hit <b>Get my winning fare</b>.</p>
+      </div>
+
+      <div class="card loading hidden" id="loading">
+        <div class="road" aria-hidden="true"><div id="carSlot2"></div></div>
+        <h3>Working out your best price…</h3>
+        <ul class="steps" id="steps">
+          <li data-node="fetch_route"><span class="st"></span>Mapping the route</li>
+          <li data-node="fetch_weather"><span class="st"></span>Checking weather &amp; demand</li>
+          <li data-node="price_trip"><span class="st"></span>Pricing against the market</li>
+        </ul>
+      </div>
+
+      <div class="card error hidden" id="error"></div>
+
+      <div id="out" class="results hidden">
+        <div class="card fare-card reveal" id="fareCard">
+          <div class="glow"></div>
+          <div class="fare-top">
+            <span class="label">Your winning fare</span>
+            <span class="pill" id="srcPill"></span>
+          </div>
+          <div class="fare-amt num"><span class="cur">₹</span><span id="fareNum">0</span></div>
+          <p class="headline" id="headline"></p>
+          <div class="badges" id="badges"></div>
+          <div class="options" id="options" role="radiogroup" aria-label="Fare options"></div>
+          <div class="outcome" id="outcome">
+            <span class="q" id="outcomeQ">Sent the offer? Tell SoloFare how it went — it learns your market.</span>
+            <button class="btn won" id="wonBtn" type="button">✓ Booked</button>
+            <button class="btn lost" id="lostBtn" type="button">✗ Didn't book</button>
+          </div>
+        </div>
+
+        <div class="row2">
+          <div class="card panel reveal" style="animation-delay:.08s">
+            <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>You vs the market</h4>
+            <div class="bars" id="bars"></div>
+          </div>
+          <div class="card panel reveal" style="animation-delay:.14s">
+            <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 14l4-4M3.3 17a10 10 0 1 1 17.4 0"/></svg>Demand pressure</h4>
+            <div class="gauge">
+              <svg viewBox="0 0 200 112">
+                <defs><linearGradient id="gGrad" x1="0" x2="1"><stop offset="0" stop-color="#6aa8ff"/><stop offset=".5" stop-color="#ffc93c"/><stop offset="1" stop-color="#ff6b6b"/></linearGradient></defs>
+                <path d="M16 100a84 84 0 0 1 168 0" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="14" stroke-linecap="round"/>
+                <path id="gArc" d="M16 100a84 84 0 0 1 168 0" fill="none" stroke="url(#gGrad)" stroke-width="14" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264"/>
+              </svg>
+              <div class="g-val"><b class="num" id="gLabel">—</b><span id="gSub"></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card panel reveal" style="animation-delay:.2s">
+          <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14"/></svg>Trip</h4>
+          <div class="stats" id="stats" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:14px"></div>
+          <div id="map"></div>
+        </div>
+
+        <div class="card panel reveal" style="animation-delay:.26s">
+          <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>What's driving the price</h4>
+          <div class="factors" id="factors"></div>
+        </div>
+
+        <div class="row2">
+          <div class="card panel wa reveal" style="animation-delay:.32s">
+            <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-12.6 7.3L3 20l1.3-5.1A8.5 8.5 0 1 1 21 11.5z"/></svg>Send this to your customer</h4>
+            <div class="shimmer" id="pitchLoading" aria-label="AI is writing your message"><i></i><i></i><i></i></div>
+            <div class="bubble hidden" id="pitch"></div>
+            <div class="sp" id="sellingPoints"></div>
+            <div class="actions">
+              <a class="btn green" id="waBtn" target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.3 14.1c-.2.6-1.3 1.2-1.8 1.2s-1 .3-3.3-.7-3.7-3.3-3.8-3.5-.9-1.2-.9-2.3.6-1.6.8-1.9.5-.3.7-.3h.5c.2 0 .4 0 .6.5l.8 1.9c.1.2.1.3 0 .5l-.3.5-.4.4c-.1.1-.3.3-.1.6s.6 1 1.3 1.7c.9.8 1.7 1 1.9 1.2s.4.1.5-.1l.7-.9c.2-.2.4-.2.6-.1l1.8.9c.3.1.4.2.5.3s.1.7-.1 1.3z"/></svg>
+                Share on WhatsApp
+              </a>
+              <button class="btn ghost" id="copyBtn" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                Copy message
+              </button>
+            </div>
+          </div>
+          <div class="card panel reveal" style="animation-delay:.38s">
+            <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15 9.5a3 3 0 0 0-3-1.5c-1.7 0-3 .9-3 2s1.3 1.7 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-3-1.5M12 6v2M12 16v2"/></svg>Where your money goes</h4>
+            <div class="stack" id="stack"></div>
+            <div class="legend" id="legend"></div>
+          </div>
+        </div>
+
+        <div class="card panel reveal" style="animation-delay:.44s">
+          <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"/></svg>Why this price</h4>
+          <ul class="why" id="why"></ul>
+        </div>
+      </div>
+
+      <div class="card panel" id="history">
+        <h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/></svg>Your track record</h4>
+        <div class="hist-top">
+          <div class="ring">
+            <svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" stroke="rgba(255,255,255,.07)"/>
+              <circle id="ringArc" cx="50" cy="50" r="42" stroke="url(#gGrad2)" stroke-linecap="round" stroke-dasharray="264" stroke-dashoffset="264"/>
+              <defs><linearGradient id="gGrad2"><stop offset="0" stop-color="#3ddc97"/><stop offset="1" stop-color="#ffc93c"/></linearGradient></defs></svg>
+            <div class="rv num"><span><span id="ringVal">—</span><small>WIN RATE</small></span></div>
+          </div>
+          <div class="hist-stats" id="histStats"></div>
+        </div>
+        <div class="hist-list" id="histList"></div>
+      </div>
+    </section>
+  </div>
+  <footer>Routes © OpenStreetMap contributors · Weather by OpenWeather · Fares are suggestions — you set the final price.</footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<template id="carTpl">
+  <svg class="car" viewBox="0 0 120 56" aria-hidden="true">
+    <rect x="44" y="3" width="26" height="8" rx="2" fill="#1a1300"/><text x="57" y="9.6" font-size="6" font-weight="800" text-anchor="middle" fill="#ffc93c" font-family="sans-serif">TAXI</text>
+    <path d="M14 40c0-6 3-10 9-11l12-2 9-12c2-2 4-3 7-3h22c3 0 5 1 7 3l10 12 12 2c5 1 8 5 8 11v4H14z" fill="#ffc93c"/>
+    <path d="M48 16h11v11H40zM63 16h11l8 11H63z" fill="#20253a"/>
+    <rect x="14" y="34" width="9" height="4" rx="2" fill="#fff6c9"/><rect x="99" y="34" width="7" height="4" rx="2" fill="#ff6b6b"/>
+    <path d="M14 40h92" stroke="#d99b14" stroke-width="2"/>
+    <circle cx="34" cy="45" r="8" fill="#151826"/><circle cx="34" cy="45" r="3.5" fill="#8a90a6"/>
+    <circle cx="86" cy="45" r="8" fill="#151826"/><circle cx="86" cy="45" r="3.5" fill="#8a90a6"/>
+  </svg>
+</template>
+
+<script>
+(() => {
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const inr = n => Math.round(n).toLocaleString('en-IN');
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  // ---------- Animated car + speed lines in the empty/loading states ----------
+  for (const slot of ['#carSlot', '#carSlot2']) {
+    const host = $(slot);
+    host.appendChild($('#carTpl').content.cloneNode(true));
+    for (let i = 0; i < 4; i++) {
+      const s = el('div', 'speed');
+      Object.assign(s.style, { top: `${18 + i * 12}px`, width: `${40 + i * 14}px`, animationDelay: `${i * .27}s` });
+      host.parentElement.appendChild(s);
+    }
+  }
+
+  // ---------- Saved driver profile (per-browser convenience only) ----------
+  const PROFILE_FIELDS = ['fuel_price', 'mileage_kmpl', 'min_profit', 'tolls_parking', 'driver_name', 'driver_phone'];
+  let savedLanguage = null;
+  try {
+    const saved = JSON.parse(localStorage.getItem('solofare.profile') || localStorage.getItem('solofare.costs') || 'null');
+    if (saved) {
+      PROFILE_FIELDS.forEach(k => { if (saved[k] != null) $('#' + k).value = saved[k]; });
+      if (saved.return_empty != null) $('#return_empty').checked = saved.return_empty;
+      savedLanguage = saved.language || null;
+    }
+  } catch {}
+  const saveProfile = () => {
+    try {
+      const o = Object.fromEntries(PROFILE_FIELDS.map(k => [k, $('#' + k).value]));
+      o.return_empty = $('#return_empty').checked;
+      o.language = segVal('language');
+      localStorage.setItem('solofare.profile', JSON.stringify(o));
+    } catch {}
+  };
+
+  // ---------- Trip time default: now ----------
+  const now = new Date(); now.setSeconds(0, 0);
+  $('#tripTime').value = new Date(now - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+  // ---------- Segmented controls ----------
+  $$('.seg').forEach(seg => seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    $$('button', seg).forEach(x => { x.classList.toggle('active', x === b); x.setAttribute('aria-checked', x === b); });
+    if (seg.dataset.group === 'weather_override') setRain(b.dataset.value === 'rain' ? 1 : 0);
+  }));
+  const segVal = g => $(`.seg[data-group="${g}"] .active`).dataset.value;
+  if (savedLanguage) { const b = $(`.seg[data-group="language"] button[data-value="${savedLanguage}"]`); if (b) b.click(); }
+
+  // ---------- Competitor rows ----------
+  let comps = [{ name: 'Red Taxi', fare: 600 }, { name: 'Blue Taxi', fare: 580 }];
+  const PRESETS = ['Rapido', 'Ola', 'Uber', 'Fast Track', 'Namma Yatri'];
+  function renderComps() {
+    const host = $('#comps'); host.innerHTML = '';
+    comps.forEach((c, i) => {
+      const row = el('div', 'comp-row');
+      const name = el('input'); Object.assign(name, { type: 'text', value: c.name, placeholder: 'Operator', ariaLabel: 'Competitor name' });
+      name.oninput = () => (c.name = name.value);
+      const fw = el('div', 'fare'); fw.appendChild(el('span', '', '₹'));
+      const fare = el('input'); Object.assign(fare, { type: 'number', value: c.fare ?? '', min: 1, placeholder: 'Fare', ariaLabel: 'Competitor fare' });
+      fare.oninput = () => (c.fare = parseFloat(fare.value));
+      fw.appendChild(fare);
+      const rm = el('button', 'icon-btn'); rm.type = 'button'; rm.title = 'Remove'; rm.ariaLabel = 'Remove competitor';
+      rm.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+      rm.onclick = () => { comps.splice(i, 1); renderComps(); };
+      row.append(name, fw, rm); host.appendChild(row);
+    });
+    const p = $('#presets'); p.innerHTML = '';
+    const used = new Set(comps.map(c => c.name.toLowerCase()));
+    PRESETS.filter(n => !used.has(n.toLowerCase())).forEach(n => {
+      const b = el('button', 'chip-btn', '+ ' + n); b.type = 'button';
+      b.onclick = () => { comps.push({ name: n, fare: null }); renderComps(); $$('#comps .comp-row').at(-1).querySelector('.fare input').focus(); };
+      p.appendChild(b);
+    });
+    const add = el('button', 'chip-btn', '+ Other'); add.type = 'button';
+    add.onclick = () => { comps.push({ name: '', fare: null }); renderComps(); $$('#comps .comp-row').at(-1).querySelector('input').focus(); };
+    p.appendChild(add);
+  }
+  renderComps();
+
+
+  // ---------- Rain canvas ----------
+  const cv = $('#rain'), ctx = cv.getContext('2d');
+  let drops = [], rainLevel = 0, rainAlpha = 0, rafOn = false, flashTimer = null;
+  const resize = () => { cv.width = innerWidth * devicePixelRatio; cv.height = innerHeight * devicePixelRatio; };
+  addEventListener('resize', resize); resize();
+  function makeDrops(n) {
+    drops = Array.from({ length: n }, () => ({ x: Math.random() * cv.width, y: Math.random() * cv.height,
+      l: (10 + Math.random() * 18) * devicePixelRatio, v: (9 + Math.random() * 9) * devicePixelRatio, o: .15 + Math.random() * .35 }));
+  }
+  function tick() {
+    const target = rainLevel ? 1 : 0;
+    rainAlpha += (target - rainAlpha) * .05;
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (rainAlpha < .01 && !rainLevel) { rafOn = false; return; }
+    ctx.lineCap = 'round'; ctx.lineWidth = 1.1 * devicePixelRatio;
+    for (const d of drops) {
+      ctx.strokeStyle = `rgba(170,190,255,${d.o * rainAlpha})`;
+      ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.l * .18, d.y + d.l); ctx.stroke();
+      d.y += d.v; d.x -= d.v * .18;
+      if (d.y > cv.height) { d.y = -d.l; d.x = Math.random() * cv.width * 1.1; }
+    }
+    requestAnimationFrame(tick);
+  }
+  function setRain(level) {
+    if (reduceMotion) return;
+    rainLevel = level;
+    clearInterval(flashTimer);
+    if (level) {
+      makeDrops(level === 2 ? 420 : 220);
+      if (!rafOn) { rafOn = true; requestAnimationFrame(tick); }
+      if (level === 2) flashTimer = setInterval(() => {
+        if (Math.random() > .5) return;
+        const f = $('#flash');
+        f.animate([{ opacity: 0 }, { opacity: .18 }, { opacity: 0 }, { opacity: .1 }, { opacity: 0 }], { duration: 700 });
+      }, 4000);
+    }
+  }
+
+  // ---------- Place suggestions (search as you type) ----------
+  const points = { pickup: null, drop: null };  // coordinates of a picked suggestion, if any
+  function attachSuggest(id) {
+    const input = $('#' + id), field = input.parentElement;
+    let list = null, items = [], idx = -1, timer = null, seq = 0;
+    const close = () => { if (list) list.remove(); list = null; };
+    const choose = p => { input.value = p.name; points[id] = { lat: p.lat, lon: p.lon, name: p.name }; close(); };
+    const draw = () => {
+      close(); list = el('ul', 'suggest'); list.setAttribute('role', 'listbox');
+      if (!items.length) list.append(el('li', 'empty-s', 'No matches — try adding the area or city'));
+      items.forEach((p, i) => {
+        const li = el('li', i === idx ? 'on' : ''); li.setAttribute('role', 'option');
+        li.append(el('b', '', p.name), el('span', '', p.context));
+        li.onmousedown = e => { e.preventDefault(); choose(p); };
+        list.append(li);
+      });
+      field.append(list);
+    };
+    input.addEventListener('input', () => {
+      points[id] = null;  // typed text no longer matches the picked coordinates
+      clearTimeout(timer);
+      const q = input.value.trim();
+      if (q.length < 3) { close(); return; }
+      timer = setTimeout(async () => {
+        const my = ++seq;
+        try {
+          const res = await fetch('/places?q=' + encodeURIComponent(q));
+          if (!res.ok || my !== seq) return;
+          items = await res.json(); idx = -1;
+          if (document.activeElement === input) draw();
+        } catch {}
+      }, 280);
+    });
+    input.addEventListener('keydown', e => {
+      if (!list || !items.length) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault(); idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; draw();
+      } else if (e.key === 'Enter' && idx >= 0) { e.preventDefault(); choose(items[idx]); }
+      else if (e.key === 'Escape') close();
+    });
+    input.addEventListener('blur', () => setTimeout(close, 120));
+  }
+  attachSuggest('pickup'); attachSuggest('drop');
+
+  $('#swap').onclick = () => {
+    const a = $('#pickup'), b = $('#drop');
+    [a.value, b.value] = [b.value, a.value];
+    [points.pickup, points.drop] = [points.drop, points.pickup];
+  };
+
+  $('#locate').onclick = () => {
+    const b = $('#locate');
+    if (!navigator.geolocation) { toast('Location is not available in this browser'); return; }
+    b.setAttribute('aria-busy', 'true');
+    navigator.geolocation.getCurrentPosition(async pos => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      let name = 'My location';
+      try {
+        const r = await fetch(`/places/reverse?lat=${lat}&lon=${lon}`);
+        if (r.ok) { const p = await r.json(); name = p.context ? `${p.name}, ${p.context.split(', ')[0]}` : p.name; }
+      } catch {}
+      $('#pickup').value = name; points.pickup = { lat, lon, name };
+      b.removeAttribute('aria-busy'); toast('Pickup set to your current location');
+    }, err => {
+      b.removeAttribute('aria-busy');
+      toast(err.code === 1 ? 'Location permission denied' : 'Could not get your location');
+    }, { enableHighAccuracy: true, timeout: 10000 });
+  };
+
+  // ---------- Progress steps (driven by the streamed graph nodes) ----------
+  function resetSteps() { $$('#steps li').forEach((li, i) => (li.className = i === 0 ? 'active' : '')); }
+  function stepDone(node) {
+    const lis = $$('#steps li'), i = lis.findIndex(li => li.dataset.node === node);
+    if (i < 0) return;
+    lis.forEach((li, j) => { if (j <= i) li.className = 'done'; else if (j === i + 1) li.className = 'active'; });
+  }
+
+  const show = id => ['empty', 'loading', 'error', 'out'].forEach(x => $('#' + x).classList.toggle('hidden', x !== id));
+  function showError(msg) {
+    const box = $('#error'); box.innerHTML = '';
+    box.append(el('b', '', "Couldn't price this trip. "), el('span', '', msg));
+    const p = el('p', '', 'Check the place names (pick a suggestion, or add the city, e.g. "Gandhipuram, Coimbatore") and that the server can reach the internet.');
+    p.style.cssText = 'color:var(--muted);margin:8px 0 0;font-size:13.5px';
+    box.append(p); show('error');
+  }
+
+  // ---------- Submit + stream ----------
+  let current = null;  // the quote on screen
+  $('#form').addEventListener('submit', async e => {
+    e.preventDefault();
+    saveProfile();
+    const go = $('#go'); go.setAttribute('aria-busy', 'true'); go.disabled = true;
+    show('loading'); resetSteps();
+    if (innerWidth < 980) $('#results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const body = {
+      pickup: $('#pickup').value.trim(),
+      drop: $('#drop').value.trim(),
+      pickup_point: points.pickup,
+      drop_point: points.drop,
+      trip_time: $('#tripTime').value || null,
+      vehicle_type: segVal('vehicle_type'),
+      competitor_fares: comps.filter(c => c.name && c.name.trim() && c.fare > 0).map(c => ({ name: c.name.trim(), fare: c.fare })),
+      taxi_supply: segVal('taxi_supply'),
+      weather_override: segVal('weather_override'),
+      language: segVal('language'),
+      fuel_price: parseFloat($('#fuel_price').value) || 102,
+      mileage_kmpl: parseFloat($('#mileage_kmpl').value) || 15,
+      min_profit: parseFloat($('#min_profit').value) || 0,
+      tolls_parking: parseFloat($('#tolls_parking').value) || 0,
+      return_empty: $('#return_empty').checked,
+    };
+    current = { req: body, selected: 'recommended', quoteId: null, advice: null, shownFare: 0, streamError: null };
+    const result = {};
+    try {
+      const res = await fetch('/taxi/quote/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) {
+        let detail = null; try { detail = (await res.json()).detail; } catch {}
+        throw new Error(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : 'Server error ' + res.status);
+      }
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (line) handleEvent(JSON.parse(line), result);
+        }
+      }
+      if (!current.quoteId) throw new Error(current.streamError || 'The connection closed before the quote finished.');
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      go.removeAttribute('aria-busy'); go.disabled = false;
+    }
+  });
+
+  function handleEvent(ev, result) {
+    if (ev.type === 'error') { current.streamError = ev.detail; return; }
+    if (ev.type === 'node') {
+      Object.assign(result, ev.data || {});
+      stepDone(ev.node);
+      if (ev.node === 'price_trip') {
+        Object.assign(current, { quote: result.quote, route: result.route, weather: result.weather });
+        renderQuote();
+      }
+    } else if (ev.type === 'done') {
+      const r = ev.result;
+      Object.assign(current, { quoteId: ev.quote_id, advice: r.advice, source: r.advice_source, error: r.error });
+      renderAdvice();
+      loadHistory();
+    }
+  }
+
+  // ---------- Helpers ----------
+  function countUp(node, from, to, ms = 1100) {
+    if (reduceMotion || from === to) { node.textContent = inr(to); return; }
+    const t0 = performance.now();
+    const step = t => {
+      const p = Math.min(1, (t - t0) / ms), eased = 1 - Math.pow(1 - p, 4);
+      node.textContent = inr(from + (to - from) * eased);
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  const typing = () => { const s = el('span', 'typing'); s.append(el('b'), el('b'), el('b')); return s; };
+
+  function options() {
+    const q = current.quote, b = q.breakdown;
+    return q.options.map(o => {
+      // The AI may fine-tune the recommended fare inside the safe range
+      const fare = o.key === 'recommended' && current.advice ? current.advice.fare : o.fare;
+      return { ...o, fare, savings: Math.round(q.anchor_fare - fare), profit: Math.round(fare - b.fuel_cost - b.tolls_parking) };
+    });
+  }
+  const selectedOption = () => options().find(o => o.key === current.selected);
+
+  function fillPitch(template, opt) {
+    const q = current.quote;
+    let text = template.replaceAll('{FARE}', inr(opt.fare)).replaceAll('{SAVINGS}', inr(Math.max(0, opt.savings))).replaceAll('{COMPETITOR}', q.anchor_name);
+    const name = $('#driver_name').value.trim(), phone = $('#driver_phone').value.trim();
+    if (name || phone) text += '\n— ' + [name, phone && '📞 ' + phone].filter(Boolean).join(' · ');
+    return text;
+  }
+
+  // ---------- Render: fare + market (as soon as price_trip finishes) ----------
+  function renderQuote() {
+    const { quote: q, route: r, weather: w } = current;
+    $$('#out .card').forEach(n => { n.classList.remove('reveal'); void n.offsetWidth; n.classList.add('reveal'); });
+    show('out');
+
+    const src = $('#srcPill'); src.className = 'pill'; src.textContent = 'AI reviewing'; src.append(typing()); src.title = '';
+    $('#headline').textContent = q.can_beat_market
+      ? `₹${inr(q.savings_vs_cheapest)} under ${q.anchor_name} — and still ₹${inr(q.breakdown.driver_profit)} in your pocket`
+      : 'The market is below your cost floor — win on service, not price';
+
+    // Options
+    const box = $('#options'); box.innerHTML = '';
+    box.classList.toggle('hidden', !q.can_beat_market);
+    q.options.forEach(o => {
+      const b = el('button', 'opt'); b.type = 'button'; b.dataset.key = o.key; b.setAttribute('role', 'radio');
+      const t = el('span', 't', o.label); if (o.key === 'recommended') t.append(el('span', 'star', 'BEST'));
+      b.append(t, el('div', 'f num'), el('div', 's'), el('div', 'h', o.hint));
+      b.onclick = () => selectOption(o.key);
+      box.append(b);
+    });
+
+    // Outcome buttons wait for the saved quote id
+    $('#wonBtn').disabled = $('#lostBtn').disabled = true;
+    $('#outcomeQ').textContent = 'Sent the offer? Tell SoloFare how it went — it learns your market.';
+
+    // Gauge
+    const p = q.demand_pressure;
+    $('#gArc').style.strokeDashoffset = 264;
+    setTimeout(() => ($('#gArc').style.strokeDashoffset = 264 * (1 - p)), 300);
+    $('#gLabel').textContent = p >= .65 ? 'High' : p >= .3 ? 'Medium' : 'Low';
+    $('#gSub').textContent = `undercut ${q.undercut_pct}% · score ${Math.round(p * 100)}`;
+
+    // Trip stats
+    const stats = $('#stats'); stats.innerHTML = '';
+    const stat = (k, v, sub) => { const s = el('div', 'stat'); s.append(el('div', 'k', k), el('div', 'val num', v)); if (sub) s.append(el('div', 'sub', sub)); stats.append(s); };
+    stat('Distance', r.distance_km.toFixed(1) + ' km', r.source === 'osrm' ? 'road route' : 'estimated');
+    stat('Drive time', '≈' + q.eta_min + ' min', q.time_band === 'peak' ? 'peak traffic' : q.time_band === 'night' ? 'night, clear roads' : 'normal traffic');
+    const wIcon = w.is_raining ? (w.rain_intensity === 'heavy' ? '⛈️' : '🌧️') : w.condition === 'Clouds' ? '☁️' : w.condition === 'Unknown' ? '❔' : '☀️';
+    stat('Weather', wIcon + ' ' + (w.temp_c != null ? Math.round(w.temp_c) + '°C' : w.condition), w.description);
+    stat('Per km', '', 'your fare / km'); stats.lastChild.querySelector('.val').id = 'perKm';
+    setRain(w.is_raining ? (w.rain_intensity === 'heavy' ? 2 : 1) : 0);
+
+    drawMap(r);
+
+    // Factors
+    const fx = $('#factors'); fx.innerHTML = '';
+    q.factors.forEach(f => {
+      const n = el('div', 'factor ' + f.direction);
+      n.append(el('span', 'arr', f.direction === 'up' ? '↑' : f.direction === 'down' ? '↓' : '→'));
+      const t = el('div', '', f.label); t.append(el('small', '', f.detail)); n.append(t); fx.append(n);
+    });
+    if (q.market_source === 'estimate') {
+      const n = el('div', 'factor flat'); n.append(el('span', 'arr', 'i'));
+      const t = el('div', '', 'No competitor fares entered'); t.append(el('small', '', 'Using a typical Coimbatore fare as the market')); n.append(t); fx.append(n);
+    }
+
+    // Pitch + reasons wait for the AI
+    $('#pitch').classList.add('hidden'); $('#pitchLoading').classList.remove('hidden');
+    $('#sellingPoints').innerHTML = ''; $('#waBtn').removeAttribute('href');
+    const why = $('#why'); why.innerHTML = '';
+    const li = el('li', 'muted-note', 'AI is checking the numbers'); li.append(typing()); why.append(li);
+
+    current.shownFare = 0;
+    selectOption('recommended');
+  }
+
+  // ---------- Render: AI advice (when the graph finishes) ----------
+  function renderAdvice() {
+    const a = current.advice, q = current.quote;
+    const src = $('#srcPill');
+    src.className = 'pill' + (current.source === 'groq' ? ' ai' : '');
+    src.textContent = current.source === 'groq' ? 'AI-tuned · Groq' : 'Rule engine (AI offline)';
+    src.title = current.error || '';
+    $('#headline').textContent = a.headline;
+
+    $('#pitchLoading').classList.add('hidden'); $('#pitch').classList.remove('hidden');
+    const sp = $('#sellingPoints'); sp.innerHTML = '';
+    a.selling_points.forEach(s => sp.append(el('span', '', '✓ ' + s)));
+    const why = $('#why'); why.innerHTML = '';
+    a.reasoning.forEach(t => why.append(el('li', '', t)));
+    if (a.fare !== q.fare) why.append(el('li', '', `AI moved the recommended fare from ₹${inr(q.fare)} to ₹${inr(a.fare)}.`));
+
+    $('#wonBtn').disabled = $('#lostBtn').disabled = false;
+    selectOption(current.selected);
+
+    const opt = selectedOption();
+    if (opt.savings > 0 && window.confetti && !reduceMotion) {
+      const rect = $('#fareCard').getBoundingClientRect();
+      confetti({ particleCount: 110, spread: 75, startVelocity: 38, origin: { x: (rect.left + rect.width * .25) / innerWidth, y: Math.max(.1, (rect.top + 80) / innerHeight) },
+        colors: ['#ffc93c', '#ff8a3d', '#3ddc97', '#ffffff'], scalar: .9, disableForReducedMotion: true });
+    }
+  }
+
+  // ---------- Everything that depends on the chosen option ----------
+  function selectOption(key) {
+    current.selected = key;
+    const q = current.quote, opts = options(), opt = opts.find(o => o.key === key);
+
+    $$('#options .opt').forEach(b => {
+      const o = opts.find(x => x.key === b.dataset.key), on = b.dataset.key === key;
+      b.classList.toggle('active', on); b.setAttribute('aria-checked', on);
+      b.querySelector('.f').textContent = '₹' + inr(o.fare);
+      b.querySelector('.s').textContent = o.savings > 0 ? `save ₹${inr(o.savings)} · keep ₹${inr(o.profit)}` : `keep ₹${inr(o.profit)}`;
+    });
+
+    countUp($('#fareNum'), current.shownFare, opt.fare);
+    current.shownFare = opt.fare;
+    const perKm = $('#perKm'); if (perKm) perKm.textContent = '₹' + (opt.fare / current.route.distance_km).toFixed(1);
+
+    // Badges
+    const badges = $('#badges'); badges.innerHTML = '';
+    if (opt.savings > 0) {
+      const b = el('span', 'badge good'); b.append('▼ ₹' + inr(opt.savings) + ' cheaper than ' + q.anchor_name + ' ');
+      b.append(el('span', 'strike num', '₹' + inr(q.anchor_fare))); badges.append(b);
+      badges.append(el('span', 'badge neutral', Math.round((opt.savings / q.anchor_fare) * 100) + '% under market'));
+    } else {
+      badges.append(el('span', 'badge warn', `Can't beat ₹${inr(q.anchor_fare)} without losing money — win on service`));
+    }
+    badges.append(el('span', 'badge neutral', `You keep ≈ ₹${inr(opt.profit)}`));
+
+    // Bars
+    const rows = [{ name: 'You', fare: opt.fare, you: true }, ...(current.req.competitor_fares.length ? current.req.competitor_fares : [{ name: 'Market est.', fare: q.anchor_fare }])]
+      .sort((x, y) => x.fare - y.fare);
+    const max = Math.max(...rows.map(x => x.fare)) * 1.05;
+    const bars = $('#bars'); bars.innerHTML = '';
+    rows.forEach(x => {
+      const row = el('div', 'bar-row' + (x.you ? ' you' : ''));
+      const tr = el('div', 'track'), fill = el('div', 'fill'); tr.appendChild(fill);
+      row.append(el('span', 'nm', x.you ? '★ You' : x.name), tr, el('span', 'v num', '₹' + inr(x.fare)));
+      bars.appendChild(row);
+      requestAnimationFrame(() => setTimeout(() => (fill.style.width = (x.fare / max * 100) + '%'), 60));
+    });
+
+    // Money breakdown
+    const b = q.breakdown, fuel = b.fuel_cost, tolls = b.tolls_parking, profit = Math.max(0, opt.profit);
+    const parts = [['Fuel (incl. empty return)', fuel, '#6aa8ff'], ['Tolls / parking', tolls, '#a98bff'], ['Your profit', profit, '#3ddc97']];
+    const stack = $('#stack'), legend = $('#legend'); stack.innerHTML = ''; legend.innerHTML = '';
+    parts.forEach(([name, v, c]) => {
+      const seg = el('div'); seg.style.background = c; stack.append(seg);
+      setTimeout(() => (seg.style.width = (v / opt.fare * 100) + '%'), 60);
+      if (v > 0 || name !== 'Tolls / parking') {
+        const li = el('div', 'li'); const s = el('span'); const sw = el('i', 'sw'); sw.style.background = c;
+        s.append(sw, name); li.append(s, el('b', 'num', '₹' + inr(v))); legend.append(li);
+      }
+    });
+    const tot = el('div', 'li total'); tot.append(el('span', '', 'Fare'), el('b', 'num', '₹' + inr(opt.fare))); legend.append(tot);
+    const fl = el('div', 'li'); fl.append(el('span', '', `Lowest you should go: ₹${inr(q.floor_fare)}`)); fl.style.fontSize = '12px'; legend.append(fl);
+
+    // Pitch
+    if (current.advice) {
+      const text = fillPitch(current.advice.customer_pitch, opt);
+      const pitch = $('#pitch'); pitch.textContent = text;
+      pitch.append(el('span', 'time', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ✓✓'));
+      $('#waBtn').href = 'https://wa.me/?text=' + encodeURIComponent(text);
+      $('#copyBtn').onclick = async () => {
+        try { await navigator.clipboard.writeText(text); toast('Message copied — paste it to your customer'); }
+        catch { toast('Copy failed — select the text and copy it manually'); }
+      };
+      if (!$('#wonBtn').disabled) $('#outcomeQ').textContent = `Offered ₹${inr(opt.fare)}? Tell SoloFare if they booked — it learns your market.`;
+    }
+  }
+  ['driver_name', 'driver_phone'].forEach(id => $('#' + id).addEventListener('input', () => { if (current && current.advice) selectOption(current.selected); }));
+
+  // ---------- Outcomes ----------
+  async function sendOutcome(quoteId, outcome, fare) {
+    const res = await fetch(`/taxi/quotes/${quoteId}/outcome`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outcome, final_fare: fare }) });
+    if (!res.ok) throw new Error('Could not save');
+    return (await res.json()).stats;
+  }
+  for (const [btn, outcome] of [['#wonBtn', 'won'], ['#lostBtn', 'lost']]) {
+    $(btn).onclick = async () => {
+      const opt = selectedOption();
+      $('#wonBtn').disabled = $('#lostBtn').disabled = true;
+      try {
+        const s = await sendOutcome(current.quoteId, outcome, opt.fare);
+        $('#outcomeQ').textContent = (outcome === 'won' ? `🎉 Booked at ₹${inr(opt.fare)}! ` : 'Noted — next quotes will sharpen. ')
+          + `Win rate ${Math.round(s.win_rate * 100)}% over ${s.decided} quote${s.decided === 1 ? '' : 's'}.`;
+        if (outcome === 'won' && window.confetti && !reduceMotion) confetti({ particleCount: 60, spread: 60, origin: { y: .7 }, colors: ['#3ddc97', '#ffc93c'] });
+        loadHistory();
+      } catch {
+        $('#wonBtn').disabled = $('#lostBtn').disabled = false; toast('Could not save — is the server running?');
+      }
+    };
+  }
+
+  // ---------- History ----------
+  const ago = ts => {
+    const s = Date.now() / 1000 - ts;
+    return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago';
+  };
+  async function loadHistory() {
+    let data;
+    try { const r = await fetch('/taxi/quotes?limit=6'); if (!r.ok) return; data = await r.json(); } catch { return; }
+    const { stats: s, quotes } = data;
+    $('#ringVal').textContent = s.win_rate == null ? '—' : Math.round(s.win_rate * 100) + '%';
+    $('#ringArc').style.strokeDashoffset = 264 * (1 - (s.win_rate || 0));
+    const hs = $('#histStats'); hs.innerHTML = '';
+    for (const [k, v] of [['Booked', s.won], ['Missed', s.lost], ['Earned', '₹' + inr(s.earned)]]) {
+      const d = el('div', 'stat'); d.append(el('div', 'k', k), el('div', 'val num', String(v))); hs.append(d);
+    }
+    const list = $('#histList'); list.innerHTML = '';
+    const left = Math.max(0, 5 - s.decided);
+    const note = el('p', 'muted-note', left
+      ? `Mark ${left} more quote${left === 1 ? '' : 's'} as booked or missed and SoloFare starts tuning your prices to your own win rate.`
+      : 'Prices are now tuned to your win rate over your last 20 marked quotes.');
+    note.style.margin = '0 0 4px'; list.append(note);
+    quotes.forEach(qt => {
+      const row = el('div', 'hrow');
+      const rt = el('div', 'rt', `${qt.pickup} → ${qt.drop_place}`); rt.append(el('small', '', ago(qt.created_at)));
+      row.append(rt, el('b', 'num', '₹' + inr(qt.final_fare || qt.recommended_fare)));
+      if (qt.outcome) row.append(el('span', 'tag ' + qt.outcome, qt.outcome === 'won' ? 'Booked' : 'Missed'));
+      else {
+        const w = el('span'); w.style.cssText = 'display:flex;gap:4px';
+        for (const [label, oc] of [['✓', 'won'], ['✗', 'lost']]) {
+          const m = el('button', 'mini', label); m.type = 'button'; m.title = oc === 'won' ? 'Mark booked' : 'Mark missed';
+          m.onclick = async () => { try { await sendOutcome(qt.id, oc, qt.recommended_fare); loadHistory(); } catch { toast('Could not save'); } };
+          w.append(m);
+        }
+        row.append(w);
+      }
+      list.append(row);
+    });
+  }
+  loadHistory();
+
+  // ---------- Map ----------
+  let map, layer;
+  function drawMap(r) {
+    if (!window.L) { $('#map').textContent = 'Map unavailable offline'; return; }
+    if (!map) {
+      map = L.map('map', { zoomControl: false, attributionControl: true, scrollWheelZoom: false });
+      // Standard OSM tiles, recoloured to a night look with a CSS filter (.dark-tiles)
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors', maxZoom: 19, className: 'dark-tiles' }).addTo(map);
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+    }
+    if (layer) layer.remove();
+    layer = L.layerGroup().addTo(map);
+    L.polyline(r.path, { color: '#ffc93c', weight: 12, opacity: .18 }).addTo(layer);
+    L.polyline(r.path, { color: '#ffc93c', weight: 4, opacity: .95, className: 'route-anim' }).addTo(layer);
+    const pin = cls => L.divIcon({ className: '', html: `<div class="pin ${cls}"></div>`, iconSize: [18, 18], iconAnchor: [9, 9] });
+    L.marker([r.pickup.lat, r.pickup.lon], { icon: pin('from') }).bindTooltip(r.pickup.name).addTo(layer);
+    L.marker([r.drop.lat, r.drop.lon], { icon: pin('to') }).bindTooltip(r.drop.name).addTo(layer);
+    setTimeout(() => { map.invalidateSize(); map.fitBounds(L.latLngBounds(r.path), { padding: [36, 36] }); }, 60);
+  }
+
+  $('#out').addEventListener('animationend', e => { if (e.animationName === 'reveal') e.target.classList.remove('reveal'); });
+
+  // ---------- 3D tilt on the fare card ----------
+  const fc = $('#fareCard');
+  if (!reduceMotion && matchMedia('(hover: hover)').matches) {
+    fc.addEventListener('mousemove', e => {
+      const b = fc.getBoundingClientRect(), x = (e.clientX - b.left) / b.width - .5, y = (e.clientY - b.top) / b.height - .5;
+      fc.style.transform = `perspective(900px) rotateX(${-y * 5}deg) rotateY(${x * 7}deg)`;
+    });
+    fc.addEventListener('mouseleave', () => (fc.style.transform = ''));
+  }
+
+  // http://localhost:8000/#demo runs the default trip straight away
+  if (location.hash === '#demo') $('#form').requestSubmit();
+
+  let toastT;
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200); }
+})();
+</script>
+</body>
+</html>

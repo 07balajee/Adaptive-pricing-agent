@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adaptive Pricing Agent</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --text:#1c1c1e; --muted:#6b6b70; --line:#e3e3e6; --accent:#3b5bdb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141416; --card:#1e1e21; --text:#ececee; --muted:#9a9aa0; --line:#33333a; --accent:#7c93f5; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 32px 16px; display:grid; gap:20px; grid-template-columns: 320px 1fr; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  h1 { grid-column: 1/-1; margin:0; font-size:22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  input { width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  button { margin-top:16px; width:100%; padding:10px; border:0; border-radius:6px; background:var(--accent); color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .meta { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  .pill { font-size:13px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .pill.groq { color:var(--accent); border-color:var(--accent); }
+  #out table { border-collapse:collapse; width:100%; font-size:14px; }
+  #out th, #out td { border:1px solid var(--line); padding:6px 8px; text-align:left; vertical-align:top; }
+  #out { overflow-x:auto; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Adaptive Pricing Agent</h1>
+  <form class="card" id="f">
+    <label>Product name</label><input name="product_name" value="Fresh Organic Strawberries">
+    <label>Base price</label><input name="base_price" type="number" step="0.01" value="100">
+    <label>Cost price</label><input name="cost_price" type="number" step="0.01" value="95">
+    <label>Inventory stock</label><input name="inventory_stock" type="number" value="50">
+    <label>Competitor price</label><input name="competitor_price" type="number" step="0.01" value="95">
+    <label>Expiry date</label><input name="expiry_date" type="date">
+    <label>City</label><input name="city" value="Coimbatore">
+    <button id="go">Get price</button>
+  </form>
+  <section class="card">
+    <div class="meta" id="meta"></div>
+    <div id="out" class="muted">Fill in the product and press “Get price”.</div>
+  </section>
+</main>
+<script>
+  const f = document.getElementById('f');
+  const d = new Date(); d.setDate(d.getDate() + 5);
+  f.expiry_date.value = d.toISOString().slice(0, 10);
+
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('go'), out = document.getElementById('out'), meta = document.getElementById('meta');
+    btn.disabled = true; btn.textContent = 'Pricing…'; meta.innerHTML = ''; out.className = 'muted'; out.textContent = 'Fetching signals and asking the model…';
+    const body = Object.fromEntries(new FormData(f));
+    try {
+      const res = await fetch('/price', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(JSON.stringify(data.detail ?? data));
+      const pill = (t, cls = '') => { const s = document.createElement('span'); s.className = 'pill ' + cls; s.textContent = t; meta.appendChild(s); };
+      pill(data.recommendation_source === 'groq' ? 'Groq AI' : 'Local fallback (no LLM)', data.recommendation_source);
+      pill('Rule-based: $' + data.rule_based_price.toFixed(2));
+      pill(data.weather_signal);
+      if (data.error) pill('LLM error: ' + data.error.split('\n')[0]);
+      out.className = '';
+      if (window.marked) out.innerHTML = marked.parse(data.recommendation); else out.textContent = data.recommendation;
+    } catch (err) {
+      out.className = ''; out.textContent = 'Request failed: ' + err.message;
+    } finally {
+      btn.disabled = false; btn.textContent = 'Get price';
+    }
+  });
+</script>
+</body>
+</html>
